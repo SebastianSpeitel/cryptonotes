@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27703.2042
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9092AA53-FB77-4645-B42D-1CCCA6BD08BD}") = "cryptonotes", "cryptonotes.njsproj", "{A0502ED0-9626-4DD0-B96D-A1CAABB45146}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A0502ED0-9626-4DD0-B96D-A1CAABB45146}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A0502ED0-9626-4DD0-B96D-A1CAABB45146}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A0502ED0-9626-4DD0-B96D-A1CAABB45146}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A0502ED0-9626-4DD0-B96D-A1CAABB45146}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F7898D6A-B0EA-49F8-94EC-27731F200CBD}
+	EndGlobalSection
+EndGlobal
