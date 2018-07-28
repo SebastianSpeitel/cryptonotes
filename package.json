@@ -4,7 +4,7 @@
   "description": "cryptonotes",
   "main": "./cli.js",
   "author": {
-    "name": "Sebastian"
+    "name": "Sebastian Speitel"
   },
   "license": "MIT",
   "bin": {
@@ -16,5 +16,9 @@
   "dependencies": {
     "chalk": "^2.4.1"
   },
-  "private": true
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SebastianSpeitel/cryptonotes.git"
+  }
 }
