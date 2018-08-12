@@ -1,7 +1,7 @@
 ﻿'use strict';
 const crypto = require('crypto');
 
-function sha256(buf) {
+function hash(buf) {
     return crypto.createHash('sha256').update(buf).digest();
 }
 
@@ -16,12 +16,8 @@ const blockFormat = {
 }
 
 class Transaction {
-    constructor() {
-
-    }
-
-    get uint8Array() {
-        return new Uint8Array();
+    constructor(buffer) {
+        this.buffer = buffer;
     }
 
     static from(obj) {
@@ -48,28 +44,27 @@ const tHashed = Symbol('Transactions hashed');
 class Block {
     constructor(no, prevhash, version, time = Date.now(), transactions = [], nonce = 0) {
         const f = Block.format;
-        this.buffer = new ArrayBuffer(84)
-        this._no = new Uint32Array(this.buffer, f.no.pos, f.no.len / 4);
+        const buffer = new ArrayBuffer(84);
+
+        this.bytes = new DataView(buffer, 0, buffer.byteLength);
+
         this.no = no;
-        this._prevhash = new Uint8Array(this.buffer, f.prevhash.pos, f.prevhash.len);
+        this._prevhash = new Uint8Array(buffer, f.prevhash.pos, f.prevhash.len);
         this.prevhash = prevhash;
-        this._version = new Uint32Array(this.buffer, f.version.pos, f.version.len / 4);
         this.version = version;
-        this._time = new Float64Array(this.buffer, f.time.pos, f.time.len / 8);
         this.time = time;
-        this._txhash = new Uint8Array(this.buffer, f.txhash.pos, f.txhash.len);
-        this._nonce = new Int32Array(this.buffer, f.nonce.pos, f.nonce.len / 4);
+        this._txhash = new Uint8Array(buffer, f.txhash.pos, f.txhash.len);
         this.nonce = nonce;
 
         this.transactions = transactions;
     }
 
     get no() {
-        return this._no[0];
+        return this.bytes.getUint32(Block.format.no.pos);
     }
 
     set no(no) {
-        this._no.set([no]);
+        this.bytes.setUint32(0, no);
     }
 
     get prevhash() {
@@ -83,19 +78,19 @@ class Block {
     }
 
     get version() {
-        return this._version[0];
+        return this.bytes.getUint32(Block.format.version.pos);
     }
 
     set version(version) {
-        this._version.set([version]);
+        this.bytes.setUint32(Block.format.version.pos, version);
     }
 
     get time() {
-        return this._time[0];
+        return this.bytes.getFloat64(Block.format.time.pos);
     }
 
     set time(time) {
-        this._time.set([time]);
+        this.bytes.setFloat64(Block.format.time.pos, time);
     }
 
     get txhash() {
@@ -109,11 +104,11 @@ class Block {
     }
 
     get nonce() {
-        return this._nonce[0];
+        return this.bytes.getUint32(Block.format.nonce.pos);
     }
 
     set nonce(nonce) {
-        this._nonce.set([nonce]);
+        this.bytes.setUint32(Block.format.nonce.pos, nonce);
     }
 
     get transactions() {
@@ -122,11 +117,11 @@ class Block {
 
     set transactions(transactions) {
         this._transactions = transactions;
-        this.txhash = sha256(this.transactions.reduce((a, t) => concatUint8Arrays(a, t.uint8Array), new Uint8Array(0)).buffer);
+        this.txhash = hash(this.transactions.reduce((a, t) => concatUint8Arrays(a, t.uint8Array), new Uint8Array(0)).buffer);
     }
 
     get hash() {
-        return sha256(this.buffer);
+        return hash(this.raw.buffer);
     }
 
     validate(prev = null) {
@@ -162,19 +157,6 @@ class Block {
         return f.transactions.pos;
     }
 
-}
-
-function numToHex(num, digits = 1) {
-    num = num % (16 ** digits);
-    let hex = num.toString(16);
-    while (hex.length < digits) hex = '0' + hex;
-    return hex;
-}
-
-function hexToHex(hex, digits = 1) {
-    hex = hex.substr(0, digits);
-    while (hex.length < digits) hex = '0' + hex;
-    return hex;
 }
 
 module.exports.Block = Block;
