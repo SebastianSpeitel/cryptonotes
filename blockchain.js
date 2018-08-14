@@ -2,8 +2,7 @@
 /**@module blockchain */
 const crypto = require('crypto');
 
-/**
- * Hashes the given value
+/**Hashes the given value
  * @param {string | Buffer | TypedArray | DataView} buf
  * @returns {Uint8Array}
  */
@@ -19,15 +18,26 @@ const blockFormat = {
     time: { pos: 40, len: 8, end: 48, type: 'float64' },//8 byte = 64 bit
     txhash: { pos: 48, len: 32, end: 80, type: 'base64' },//32 byte = 256 bit
     nonce: { pos: 80, len: 4, end: 84, type: 'uint32' },//4 byte = 32 bit
-    transactions: { pos: 84, type: 'utf-8' }
+    transactions: { pos: 84, type: 'ArrayBuffer' }
 }
 
-/**
- * Transaction class
+/**Transaction class
  */
 class Transaction {
     constructor(buffer) {
+
+        /**Buffer representation of the transaction
+         * @type {ArrayBuffer}
+         */
         this.buffer = buffer;
+    }
+
+    /**Byte length of the buffer
+     * @type {number}
+     * @readonly
+     */
+    get byteLength() {
+        return this.buffer.byteLength;
     }
 
     /**
@@ -40,8 +50,7 @@ class Transaction {
     }
 }
 
-/**
- * Concatinates two Uint8Arrays into one.
+/**Concatinates two Uint8Arrays into one.
  * @param {Uint8Array} a
  * @param {Uint8Array} b
  * @returns {Uint8Array}
@@ -55,14 +64,13 @@ function concatUint8Arrays(a, b) {
 
 const tHashed = Symbol('Transactions hashed');
 
-/**
- * Block class
+/**Block class
  */
 class Block {
 
     constructor(opt = {}) {
 
-        /**Buffer containing all bytes of the block
+        /**Internal buffer containing all bytes of the block
          * @type {ArrayBuffer} */
         this._buffer = opt.buffer || new ArrayBuffer(84);
 
@@ -85,36 +93,23 @@ class Block {
 
     }
 
+    /**Readonly property returning the internal buffer
+     * @type {ArrayBuffer}
+     * @readonly
+     */
     get buffer() {
         if (this.header.buffer !== this._buffer || this.body.buffer !== this._buffer) {
             this._buffer = new ArrayBuffer(this.header.byteLength + this.body.byteLength);
             let temp = new Uint8Array(this._buffer);
-            temp.set(new Uint8Array(this.header.buffer));
+            temp.set(new Uint8Array(this.header.buffer, 0, 84));
             temp.set(this.body, this.header.byteLength);
             this.header = new DataView(this._buffer, 0, 84);
             this.body = new Uint8Array(this._buffer, 84);
         }
         return this._buffer;
     }
-    //constructor(no, prevhash, version, time = Date.now(), transactions = [], nonce = 0) {
-    //    const f = Block.format;
-    //    const headerBuf = new ArrayBuffer(84);
 
-    //    this.header = new DataView(headerBuf, 0, headerBuf.byteLength);
-
-    //    this.no = no;
-    //    this._prevhash = new Uint8Array(headerBuf, f.prevhash.pos, f.prevhash.len);
-    //    this.prevhash = prevhash;
-    //    this.version = version;
-    //    this.time = time;
-    //    this._txhash = new Uint8Array(headerBuf, f.txhash.pos, f.txhash.len);
-    //    this.nonce = nonce;
-
-    //    this.transactions = transactions;
-    //}
-
-    /**
-     * Blocknumber
+    /**Blocknumber (int32)
      * @type {number}
      */
     get no() {
@@ -125,24 +120,35 @@ class Block {
         this.header.setUint32(0, no);
     }
 
-    /**
-     * Hash of the previous Block
-     * @type {string}
+    /**Hash of the previous block
+     * @type {Uint8Array}
      */
     get prevhash() {
         const f = Block.format.prevhash;
-        let codes = Array(f.len);
-        for (let i = 0, l = f.len; i < l; i++)codes[i] = this.header.getUint8(f.pos + i);
-        return btoa(String.fromCharCode(codes));
+        return new Uint8Array(this.buffer, f.pos, f.len);
     }
 
     set prevhash(prevhash) {
-        const f = Block.format.prevhash;
-        const b = atob(prevhash);
-        if (b.length !== f.len) return;
-        for (let i = 0, l = b.length; i < l; i++)this.header.setUint8(f.pos + i, b.charCodeAt(i));
+        const p = Block.format.prevhash;
+        prevhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
+    /**Base64 string of the hash of the previous block
+     * @type {string}
+     */
+    get prevhashB64() {
+        return btoa(String.fromCharCode(...this.prevhash));
+    }
+
+    set prevhashB64(prevhash) {
+        let b = atob(prevhash);
+        if (b.length !== Block.format.prevhash.len) return;
+        this.prevhash = Array.from(b).map(c => c.charCodeAt(0));
+    }
+
+    /**Version of the block (int32)
+     * @type {number}
+     */
     get version() {
         return this.header.getUint32(Block.format.version.pos);
     }
@@ -151,6 +157,9 @@ class Block {
         this.header.setUint32(Block.format.version.pos, version);
     }
 
+    /**Time, when the block was mined (float64)
+     * @type {number}
+     */
     get time() {
         return this.header.getFloat64(Block.format.time.pos);
     }
@@ -159,16 +168,35 @@ class Block {
         this.header.setFloat64(Block.format.time.pos, time);
     }
 
+    /**Merklehash of all transactions in this block
+     * @type {Uint8Array}
+     */
     get txhash() {
-        return btoa(String.fromCharCode(...this._txhash));
+        const f = Block.format.txhash;
+        return new Uint8Array(this.buffer, f.pos, f.len);
     }
 
     set txhash(txhash) {
-        let b = atob(txhash);
-        if (b.length !== Block.format.txhash.len) return;
-        this._txhash.set(Array.from(b).map(c => c.charCodeAt(0)));
+        const p = Block.format.txhash;
+        txhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
+    /**Base64 string of the merklehash
+     * @type {string}
+     */
+    get txhashB64() {
+        return btoa(String.fromCharCode(...this.txhash));
+    }
+
+    set txhashB64(txhash) {
+        let b = atob(txhash);
+        if (b.length !== Block.format.txhash.len) return;
+        this.txhash = Array.from(b).map(c => c.charCodeAt(0));
+    }
+
+    /**Nonce of the block. Variable 32 bits which can be changed to get the desired hash.
+     * @type {number}
+     */
     get nonce() {
         return this.header.getUint32(Block.format.nonce.pos);
     }
@@ -177,8 +205,7 @@ class Block {
         this.header.setUint32(Block.format.nonce.pos, nonce);
     }
 
-    /**
-     * List of Transactions
+    /**List of Transactions
      * @type {Transaction[]}
      */
     get transactions() {
@@ -187,23 +214,29 @@ class Block {
 
     set transactions(transactions) {
         this._transactions = transactions;
-        this._txhash.set(hash(this.transactions.reduce((a, t) => concatUint8Arrays(a, t.uint8Array), new Uint8Array(0)).buffer));
+        this.updateTransactions();
     }
 
-    makeBody() {
+    /** Concatinates all Transactions to create the new body and recalculates the txhash*/
+    updateTransactions() {
         const size = this._transactions.reduce((s, t) => s + 4 + t.byteLength, 0);
-        this.body = new ArrayBuffer(size);
-        const view = new DataView(this.body, 0, this.body.byteLength);
-        let byteNo = 0;
+        this.body = new Uint8Array(size);
+        const view = new DataView(this.body.buffer, 0, size);
+        let pos = 0;
         this._transactions.forEach(t => {
-            const buf = t.
-                view.setUint32(byteNo)
+            const arr = new Uint8Array(t.buffer);
+            const len = arr.byteLength;
+            view.setUint32(pos, len);
+            this.body.set(arr, pos + 4);
+            pos += 4 + len;
         });
+        this.txhash = hash(this.body);
     }
 
     /**
      * Hashes the block
      * @type {Uint8Array}
+     * @readonly
      */
     get hash() {
         return hash(this.header.buffer);
