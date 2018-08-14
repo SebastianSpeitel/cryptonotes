@@ -2,13 +2,13 @@
   "name": "cryptonotes",
   "version": "0.0.0",
   "description": "cryptonotes",
-  "main": "./cli.js",
+  "main": "./src/cli.js",
   "author": {
     "name": "Sebastian Speitel"
   },
   "license": "MIT",
   "bin": {
-    "cryptonotes": "./cli.js"
+    "cryptonotes": "./src/cli.js"
   },
   "scripts": {
     "postinstall": ""
