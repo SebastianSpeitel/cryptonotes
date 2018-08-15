@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>JSDoc: Global</title>
+    <title>JSDoc: Source: cryptonotes.js</title>
 
     <script src="scripts/prettify/prettify.js"> </script>
     <script src="scripts/prettify/lang-css.js"> </script>
@@ -17,164 +17,66 @@
 
 <div id="main">
 
-    <h1 class="page-title">Global</h1>
+    <h1 class="page-title">Source: cryptonotes.js</h1>
 
     
 
 
 
-
-<section>
-
-<header>
     
-        <h2></h2>
-        
-    
-</header>
-
-<article>
-    <div class="container-overview">
-    
-        
-
-        
-
-
-<dl class="details">
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-</dl>
-
-
-        
-    
-    </div>
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-        <h3 class="subsection-title">Members</h3>
-
-        
-            
-<h4 class="name" id="blockchain"><span class="type-signature"></span>blockchain<span class="type-signature"> :Blockchain</span></h4>
-
-
-
-
-
-
-    <h5>Type:</h5>
-    <ul>
-        <li>
-            
-<span class="param-type">Blockchain</span>
-
-
-        </li>
-    </ul>
-
-
-
-
-
-<dl class="details">
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-    <dt class="tag-source">Source:</dt>
-    <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cryptonotes.js.html">cryptonotes.js</a>, <a href="cryptonotes.js.html#line14">line 14</a>
-    </li></ul></dd>
-    
-
-    
-
-    
-
-    
-</dl>
-
-
-
-
-
-
-        
-    
-
-    
-
-    
-
-    
-</article>
-
-</section>
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>﻿'use strict';
+
+const { Block, Transaction, Blockchain } = require('./blockchain.js');
+const IPFS = require('ipfs');
+
+const options = {
+    blockchainpath: './blockchain',
+    ipfs_init: { emptyRepo: true },
+    ipfs_repo: './ipfs'
+};
+
+let node;
+/**@type {Blockchain} */
+let blockchain;
+let ipfsReady = false;
+
+async function init(opt = {}) {
+    Object.assign(options, opt);
+    node = new IPFS({
+        init: options.ipfs_init,
+        repo: options.ipfs_repo
+    });
+
+    blockchain = new Blockchain({
+        init: true
+    });
+
+    node.on('ready', () => {
+        console.log('IPFS node ready');
+        ipfsReady = true;
+    });
+}
+module.exports.init = init;
+
+
+class CryptoNote {
+    constructor() {
+
+    }
+}
+
+function search() {
+
+}
+
+function add() {
+
+}
+</code></pre>
+        </article>
+    </section>
 
 
 

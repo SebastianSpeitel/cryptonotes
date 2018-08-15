@@ -2,7 +2,7 @@
   "name": "cryptonotes",
   "version": "0.0.0",
   "description": "cryptonotes",
-  "main": "./src/cli.js",
+  "main": "./src/cryptonotes.js",
   "author": {
     "name": "Sebastian Speitel"
   },
@@ -14,7 +14,8 @@
     "postinstall": ""
   },
   "dependencies": {
-    "chalk": "^2.4.1"
+    "chalk": "^2.4.1",
+    "ipfs": "^0.31.4"
   },
   "private": true,
   "repository": {

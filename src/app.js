@@ -1,3 +1,5 @@
 'use strict';
 
-console.log('Hello world');
+const cryptonotes = require('./cryptonotes.js');
+
+cryptonotes.init();

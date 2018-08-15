@@ -1,13 +1,22 @@
 ﻿'use strict';
 /**@module blockchain */
 const crypto = require('crypto');
+const fs = require('fs');
 
 /**Hashes the given value
- * @param {string | Buffer | TypedArray | DataView} buf
- * @returns {Uint8Array}
+ * @param {(string | Buffer | TypedArray | DataView)} buf value to hash
+ * @returns {Uint8Array} hash
  */
 function hash(buf) {
     return crypto.createHash('sha256').update(buf).digest();
+}
+
+function btoa(encodedString) {
+    return Buffer.from(encodedString, 'base64').toString();
+}
+
+function atob(string) {
+    return Buffer.from(string).toString('base64');
 }
 
 /**Byte format of blocks */
@@ -19,7 +28,7 @@ const blockFormat = {
     txhash: { pos: 48, len: 32, end: 80, type: 'base64' },//32 byte = 256 bit
     nonce: { pos: 80, len: 4, end: 84, type: 'uint32' },//4 byte = 32 bit
     transactions: { pos: 84, type: 'ArrayBuffer' }
-}
+};
 
 /**Transaction class
  */
@@ -42,7 +51,8 @@ class Transaction {
 
     /**
      * Returns a Transaction based on the given object
-     * @param {object} obj
+     * @param {object} obj object the new block is based on
+     * @returns {Transaction} new transaction
      */
     static from(obj) {
         if (obj instanceof Transaction) return obj;
@@ -51,9 +61,9 @@ class Transaction {
 }
 
 /**Concatinates two Uint8Arrays into one.
- * @param {Uint8Array} a
- * @param {Uint8Array} b
- * @returns {Uint8Array}
+ * @param {Uint8Array} a first array
+ * @param {Uint8Array} b second array
+ * @returns {Uint8Array} new array
  */
 function concatUint8Arrays(a, b) {
     const c = new Uint8Array(a.length + b.length);
@@ -87,10 +97,11 @@ class Block {
         if (opt.prevhash) this.prevhash = opt.prevhash;
         if (opt.version) this.version = opt.version;
         if (opt.time) this.time = opt.time;
-        if (opt.txhash) this.txhash = opt.txhash;
+        //if (opt.txhash) this.txhash = opt.txhash;
         if (opt.nonce) this.nonce = opt.nonce;
         if (opt.transactions) this.transactions = opt.transactions;
 
+        this.txhash = hash(this.body);
     }
 
     /**Readonly property returning the internal buffer
@@ -129,7 +140,7 @@ class Block {
     }
 
     set prevhash(prevhash) {
-        const p = Block.format.prevhash;
+        const p = Block.format.prevhash.pos;
         prevhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
@@ -177,7 +188,7 @@ class Block {
     }
 
     set txhash(txhash) {
-        const p = Block.format.txhash;
+        const p = Block.format.txhash.pos;
         txhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
@@ -194,7 +205,7 @@ class Block {
         this.txhash = Array.from(b).map(c => c.charCodeAt(0));
     }
 
-    /**Nonce of the block. Variable 32 bits which can be changed to get the desired hash.
+    /**Nonce of the block. Variable 32 bits which can be changed to get the desired hash. (int32)
      * @type {number}
      */
     get nonce() {
@@ -242,25 +253,52 @@ class Block {
         return hash(this.header.buffer);
     }
 
-    validate(prev = null) {
-        return this.no === 0 || (prev && this.prevhash == prev.hash);
+    /**
+     * Verifies the block based on the previous block
+     * @param {Block=} prev Previous block
+     * @returns {boolean} true if this block was verified
+     */
+    verify(prev = null) {
+        return this.no === 0 || (prev && this.prevhash === prev.hash);
     }
 
     /**
-     * Returns a Block based on the given object
-     * @param {object} obj
+     * Saves the block
+     * @param {string} path path of the file
+     */
+    save(path) {
+        if (!path) throw TypeError('Missing path argument');
+        fs.writeFile(path, new Uint8Array(this.buffer, 0, this.buffer.byteLength), (err) => {
+            if (err) console.error(err);
+        });
+    }
+
+    /**
+     * Returns a block based on the given object
+     * @param {object} obj object the new block is based on
+     * @returns {Block} new block
      */
     static from(obj) {
         if (obj instanceof Block) return obj;
         if (typeof obj === 'string') return Block.fromString(obj);
-        if (!('no' in obj && 'prevhash' in obj && 'version' in obj && 'time' in obj && 'transactions' in obj && 'nonce' in obj)) return null;
-        opt.transactions = obj.transactions.map(Transaction.from);
+        if (opt.transactions) opt.transactions = obj.transactions.map(Transaction.from);
         return new Block(obj);
     }
 
     /**
-     * Returns a Block based on the given string
-     * @param {string} str
+     * Returns a block based on the given buffer
+     * @param {ArrayBuffer} buf binary representation of the block
+     * @returns {Block} new block
+     */
+    static fromBuffer(buf) {
+        if (buf.byteLength < 84) return null;
+        return new Block({ buffer: buf });
+    }
+
+    /**
+     * Returns a block based on the given string
+     * @param {string} str string
+     * @returns {Block} new block
      */
     static fromString(str) {
         let obj;
@@ -273,7 +311,23 @@ class Block {
         return obj ? Block.from(obj) : null;
     }
 
-
+    /**
+     * Returns a block stored in the specified file
+     * @param {(string | buffer)} file path of the file
+     * @returns {Promise<Block>} Promise resolving to new block
+     * @async
+     */
+    static fromFileAsync(file) {
+        return new Promise((resolve, reject) => {
+            fs.readFile(file, (err, data) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(Block.fromBuffer(data.buffer));
+            });
+        });
+    }
 
     static get format() {
         return blockFormat;
@@ -281,5 +335,72 @@ class Block {
 
 }
 
+/**Blockchain class */
+class Blockchain {
+
+    /**
+     * Constructor
+     * @param {object=} opt options object
+     */
+    constructor(opt = {}) {
+        /**Local path of the folder containing the block files
+         * @type {string}*/
+        this.path = opt.path || './blockchain';
+
+        /**Last block on the blockchain
+         * @type {Block}*/
+        this.tail = null;
+
+        /**Pending transactions
+         * @type {Transaction[]}*/
+        this.pending = [];
+
+        if (opt.init) this.loadAndVerify().then(no => {
+            if (no === 0) this.addBlock(new Block({ no: 0, time: Date.now() }));
+        });
+    }
+
+    /**
+     * Iterates through the blockchain, starting at the startblock and verifies each block.
+     * @param {number} startblock block number, to start iterating from
+     * @returns {number} number of next block
+     */
+    async loadAndVerify(startblock = 0) {
+        /**@type {Block} */
+        let no = startblock;
+        let verified = true;
+        while (verified) {
+            /**@type {Block} */
+            let nextBlock;
+            try {
+                nextBlock = await Block.fromFileAsync(this.path + '/b' + no);
+            } catch (e) {
+                break;
+            }
+            if (nextBlock.verify(this.tail)) {
+                this.tail = nextBlock;
+                no++;
+            } else {
+                verified = false;
+                break;
+            }
+        }
+        console.log(`Blockchain verified: ${verified}. Next block: #${no}`);
+        return no;
+    }
+
+    addBlock(block) {
+        if (block.verify(this.tail)) {
+            this.tail = block;
+            this.tail.save(this.path + '/b' + this.tail.no);
+        }
+    }
+
+    mine() {
+
+    }
+}
+
 module.exports.Block = Block;
 module.exports.Transaction = Transaction;
+module.exports.Blockchain = Blockchain;
