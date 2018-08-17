@@ -21,20 +21,30 @@ async function init(opt = {}) {
         repo: options.ipfs_repo
     });
 
-    blockchain = new Blockchain({
-        init: true
-    });
-
     node.on('ready', () => {
         console.log('IPFS node ready');
         ipfsReady = true;
     });
+
+    blockchain = new Blockchain({
+        verify: true
+    });
+    await blockchain.loaded;
+
 }
 module.exports.init = init;
 
+function mine() {
+    return blockchain.mine();
+}
+module.exports.mine = mine;
 
 class CryptoNote {
     constructor() {
+
+    }
+
+    create() {
 
     }
 }

@@ -11,12 +11,17 @@ function hash(buf) {
     return crypto.createHash('sha256').update(buf).digest();
 }
 
-function btoa(encodedString) {
-    return Buffer.from(encodedString, 'base64').toString();
-}
-
-function atob(string) {
-    return Buffer.from(string).toString('base64');
+/**
+ * Generates a Uint8Array with the specified length and amount of leading zeros
+ * @param {number} leadingZeros leading zeros
+ * @param {number} bytes length
+ * @returns {Uint8Array} generated array
+ */
+function generateTarget(leadingZeros, bytes = 32) {
+    const b = Math.floor(leadingZeros / 8);
+    const target = new Uint8Array(bytes).fill(0, 0, b).fill(255, b + 1);
+    target[b] = 2 ** (8 - leadingZeros % 8) - 1;
+    return target;
 }
 
 /**Byte format of blocks */
@@ -60,19 +65,18 @@ class Transaction {
     }
 }
 
-/**Concatinates two Uint8Arrays into one.
- * @param {Uint8Array} a first array
- * @param {Uint8Array} b second array
- * @returns {Uint8Array} new array
- */
-function concatUint8Arrays(a, b) {
-    const c = new Uint8Array(a.length + b.length);
-    c.set(a);
-    c.set(b, a.length);
-    return c;
-}
+///**Concatinates two Uint8Arrays into one.
+// * @param {Uint8Array} a first array
+// * @param {Uint8Array} b second array
+// * @returns {Uint8Array} new array
+// */
+//function concatUint8Arrays(a, b) {
+//    const c = new Uint8Array(a.length + b.length);
+//    c.set(a);
+//    c.set(b, a.length);
+//    return c;
+//}
 
-const tHashed = Symbol('Transactions hashed');
 
 /**Block class
  */
@@ -144,19 +148,6 @@ class Block {
         prevhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
-    /**Base64 string of the hash of the previous block
-     * @type {string}
-     */
-    get prevhashB64() {
-        return btoa(String.fromCharCode(...this.prevhash));
-    }
-
-    set prevhashB64(prevhash) {
-        let b = atob(prevhash);
-        if (b.length !== Block.format.prevhash.len) return;
-        this.prevhash = Array.from(b).map(c => c.charCodeAt(0));
-    }
-
     /**Version of the block (int32)
      * @type {number}
      */
@@ -190,19 +181,6 @@ class Block {
     set txhash(txhash) {
         const p = Block.format.txhash.pos;
         txhash.forEach((b, i) => this.header.setUint8(p + i, b));
-    }
-
-    /**Base64 string of the merklehash
-     * @type {string}
-     */
-    get txhashB64() {
-        return btoa(String.fromCharCode(...this.txhash));
-    }
-
-    set txhashB64(txhash) {
-        let b = atob(txhash);
-        if (b.length !== Block.format.txhash.len) return;
-        this.txhash = Array.from(b).map(c => c.charCodeAt(0));
     }
 
     /**Nonce of the block. Variable 32 bits which can be changed to get the desired hash. (int32)
@@ -250,7 +228,7 @@ class Block {
      * @readonly
      */
     get hash() {
-        return hash(this.header.buffer);
+        return hash(Buffer.from(this.header.buffer));
     }
 
     /**
@@ -259,7 +237,9 @@ class Block {
      * @returns {boolean} true if this block was verified
      */
     verify(prev = null) {
-        return this.no === 0 || (prev && this.prevhash === prev.hash);
+        if (!prev || this.no === 0) return true;
+        const h = prev.hash;
+        return this.prevhash.every((b, i) => b === h[i]);
     }
 
     /**
@@ -274,6 +254,29 @@ class Block {
     }
 
     /**
+     * Increments the nonce until the hash fulfills the needed difficulty
+     * @param {number} difficulty number of zeros at the start of hash
+     * @returns {Promise<number>} hash of the mined block
+     */
+    async mine(difficulty = 1) {
+        return new Promise((resolve, reject) => {
+            const maxnonce = 2 ** 32 - 1;
+            const target = generateTarget(difficulty, 32);
+            let nonce = 0;
+            while (nonce < maxnonce) {
+                this.nonce = nonce;
+                let hash = this.hash;
+                if (hash.every((n, b) => n < target[b])) {
+                    resolve(hash);
+                    return;
+                }
+                nonce++;
+            }
+            reject('No valid nonce found');
+        });
+    }
+
+    /**
      * Returns a block based on the given object
      * @param {object} obj object the new block is based on
      * @returns {Block} new block
@@ -281,7 +284,7 @@ class Block {
     static from(obj) {
         if (obj instanceof Block) return obj;
         if (typeof obj === 'string') return Block.fromString(obj);
-        if (opt.transactions) opt.transactions = obj.transactions.map(Transaction.from);
+        if (obj.transactions) obj.transactions = obj.transactions.map(Transaction.from);
         return new Block(obj);
     }
 
@@ -329,6 +332,28 @@ class Block {
         });
     }
 
+    /**
+     * Returns a block stored in the specified file
+     * @param {(string | buffer)} file path of the file
+     * @returns {Block} Requested block
+     * @async
+     */
+    static fromFile(file) {
+        /**@type {Buffer} */
+        const buffer = fs.readFileSync(file);
+        const copy = new Uint8Array(new ArrayBuffer(buffer.byteLength));
+        buffer.copy(copy, 0, 0, buffer.length);
+        return Block.fromBuffer(copy.buffer);
+    }
+
+    /**
+     * Generates the genesis block based on the current time
+     * @returns {Block} genesis block
+     */
+    static get genesis() {
+        return new Block({ no: 0, time: Date.now() });
+    }
+
     static get format() {
         return blockFormat;
     }
@@ -347,57 +372,132 @@ class Blockchain {
          * @type {string}*/
         this.path = opt.path || './blockchain';
 
-        /**Last block on the blockchain
-         * @type {Block}*/
-        this.tail = null;
-
         /**Pending transactions
          * @type {Transaction[]}*/
         this.pending = [];
 
-        if (opt.init) this.loadAndVerify().then(no => {
+        /**Number of the last block
+         * @type {number}
+         */
+        this.no = -1;
+
+        this.nos = new Map();
+        this.blocks = new WeakMap();
+
+        /*if (opt.init) this.loadAndVerify().then(no => {
             if (no === 0) this.addBlock(new Block({ no: 0, time: Date.now() }));
+        });*/
+        this.loaded = this.load().then(s => {
+            if (!s) this.addBlock(Block.genesis);
+            if (opt.verify) this.verify().then(v => console.log(`Local blocks verified: ${v}`));
         });
+
     }
 
     /**
-     * Iterates through the blockchain, starting at the startblock and verifies each block.
-     * @param {number} startblock block number, to start iterating from
-     * @returns {number} number of next block
+     * Finds the block with the highest number in the local blockchain folder
+     * @returns {boolean} true if local blocks exist
      */
-    async loadAndVerify(startblock = 0) {
-        /**@type {Block} */
-        let no = startblock;
-        let verified = true;
-        while (verified) {
-            /**@type {Block} */
-            let nextBlock;
+    async load() {
+        /**@type {string[]} */
+        let files;
+        try {
+            files = fs.readdirSync(this.path);
+        } catch (err) {
+            fs.mkdirSync(this.path);
+            files = [];
+        }
+        if (files.length > 0) {
+            this.no = files.map(f => parseInt(f)).sort((a, b) => a - b)[0];
+            console.log(`Blocks loaded, last block: #${this.no}`);
+            return true;
+        } else {
+            console.log(`No local blocks found`);
+            return false;
+        }
+    }
+
+    async verify(start = 0) {
+        let no = start;
+        let block;
+        do {
+            let next;
             try {
-                nextBlock = await Block.fromFileAsync(this.path + '/b' + no);
-            } catch (e) {
-                break;
-            }
-            if (nextBlock.verify(this.tail)) {
-                this.tail = nextBlock;
+                next = this.getBlock(no);
+            } catch (e) { break; }
+            if (next && next.verify(block)) {
+                block = next;
                 no++;
             } else {
-                verified = false;
                 break;
             }
-        }
-        console.log(`Blockchain verified: ${verified}. Next block: #${no}`);
-        return no;
+        } while (no < this.no);
+        return no >= this.no;
+    }
+
+    /**
+     * Loads
+     * @param {number} start block number, to start iterating from
+     * @returns {Promise<number>} promise resolving in the number of last block
+     */
+    async loadAndVerify(start = 0) {
+        await this.load();
+        await this.verify(start);
+        return this.no;
+    }
+
+    /**
+     * Last block of the chain
+     * @type {Block} last block
+     * @readonly
+     */
+    get tail() {
+        if (!this._tail || this._tail.no !== this.no) this._tail = this.getBlock(this.no);
+        return this._tail;
+    }
+
+    /**
+     * Returns the block with the specified number
+     * @param {number} no number of the desired block
+     * @returns {Block} block with the specified number
+     */
+    getBlock(no) {
+        const n = this.nos.get(no) || { no: no };
+        if (this.blocks.has(n)) return this.blocks.get(n);
+        const block = Block.fromFile(this.path + '/' + no);
+        this.nos.set(no, n);
+        this.blocks.set(n, block);
+        return block;
     }
 
     addBlock(block) {
-        if (block.verify(this.tail)) {
-            this.tail = block;
-            this.tail.save(this.path + '/b' + this.tail.no);
+        if (block.no === 0 || block.verify(this.tail)) {
+            block.save(this.path + '/' + block.no);
+            this._tail = block;
+            this.no = block.no;
+            console.log(`Added block #${this.no}`);
+            return true;
         }
+        return false;
     }
 
-    mine() {
-
+    mine(difficulty = 1, amt = Infinity) {
+        let transactions;
+        if (this.pending.length <= amt) {
+            transactions = this.pending;
+            this.pending = [];
+        }
+        else {
+            transactions = this.pending.slice(0, amt);
+            this.pending = this.pending.slice(amt);
+        }
+        let block = Block.from({
+            no: this.no + 1,
+            prevhash: this.no >= 0 ? this.tail.hash : new Uint8Array(32),
+            time: Date.now(),
+            transactions: transactions
+        });
+        return block.mine(difficulty).then(() => this.addBlock(block));
     }
 }
 

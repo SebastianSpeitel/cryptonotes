@@ -39,6 +39,27 @@ function hash(buf) {
     return crypto.createHash('sha256').update(buf).digest();
 }
 
+function btoa(encodedString) {
+    return Buffer.from(encodedString, 'base64').toString();
+}
+
+function atob(string) {
+    return Buffer.from(string).toString('base64');
+}
+
+/**
+ * Generates a Uint8Array with the specified length and amount of leading zeros
+ * @param {any} leadingZeros leading zeros
+ * @param {any} bytes length
+ * @returns {Uint8Array} generated array
+ */
+function generateTarget(leadingZeros, bytes = 32) {
+    const b = Math.floor(leadingZeros / 8);
+    const target = new Uint8Array(bytes).fill(0, 0, b).fill(255, b + 1);
+    target[b] = 2 ** (8 - leadingZeros % 8) - 1;
+    return target;
+}
+
 /**Byte format of blocks */
 const blockFormat = {
     no: { pos: 0, len: 4, end: 4, type: 'uint32' },//4 byte = 32 bit
@@ -80,19 +101,18 @@ class Transaction {
     }
 }
 
-/**Concatinates two Uint8Arrays into one.
- * @param {Uint8Array} a first array
- * @param {Uint8Array} b second array
- * @returns {Uint8Array} new array
- */
-function concatUint8Arrays(a, b) {
-    const c = new Uint8Array(a.length + b.length);
-    c.set(a);
-    c.set(b, a.length);
-    return c;
-}
+///**Concatinates two Uint8Arrays into one.
+// * @param {Uint8Array} a first array
+// * @param {Uint8Array} b second array
+// * @returns {Uint8Array} new array
+// */
+//function concatUint8Arrays(a, b) {
+//    const c = new Uint8Array(a.length + b.length);
+//    c.set(a);
+//    c.set(b, a.length);
+//    return c;
+//}
 
-const tHashed = Symbol('Transactions hashed');
 
 /**Block class
  */
@@ -117,10 +137,11 @@ class Block {
         if (opt.prevhash) this.prevhash = opt.prevhash;
         if (opt.version) this.version = opt.version;
         if (opt.time) this.time = opt.time;
-        if (opt.txhash) this.txhash = opt.txhash;
+        //if (opt.txhash) this.txhash = opt.txhash;
         if (opt.nonce) this.nonce = opt.nonce;
         if (opt.transactions) this.transactions = opt.transactions;
 
+        this.txhash = hash(this.body);
     }
 
     /**Readonly property returning the internal buffer
@@ -159,7 +180,7 @@ class Block {
     }
 
     set prevhash(prevhash) {
-        const p = Block.format.prevhash;
+        const p = Block.format.prevhash.pos;
         prevhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
@@ -207,7 +228,7 @@ class Block {
     }
 
     set txhash(txhash) {
-        const p = Block.format.txhash;
+        const p = Block.format.txhash.pos;
         txhash.forEach((b, i) => this.header.setUint8(p + i, b));
     }
 
@@ -278,7 +299,7 @@ class Block {
      * @returns {boolean} true if this block was verified
      */
     verify(prev = null) {
-        return this.no === 0 || (prev &amp;&amp; this.prevhash === prev.hash);
+        return prev &amp;&amp; this.prevhash === prev.hash || this.no === 0;
     }
 
     /**
@@ -287,7 +308,30 @@ class Block {
      */
     save(path) {
         if (!path) throw TypeError('Missing path argument');
-        fs.writeFile(path, this.buffer, (err) => console.error(err));
+        fs.writeFile(path, new Uint8Array(this.buffer, 0, this.buffer.byteLength), (err) => {
+            if (err) console.error(err);
+        });
+    }
+
+    /**
+     * Increments the nonce until the hash fulfills the needed difficulty
+     * @param {number} difficulty number of zeros at the start of hash
+     * @returns {Promise&lt;number>} hash of the mined block
+     */
+    async mine(difficulty = 1) {
+        return new Promise((resolve, reject) => {
+            const maxnonce = 2 ** 32 - 1;
+            const target = generateTarget(difficulty, 32);
+            let nonce = 0;
+            while (nonce &lt; maxnonce) {
+                this.nonce = nonce;
+                let hash = this.hash;
+                for (let byte = 0; byte &lt; 32; byte++) {
+                    if (hash[byte] &lt; target[byte]) continue;
+                }
+                nonce++;
+            }
+        });
     }
 
     /**
@@ -298,8 +342,7 @@ class Block {
     static from(obj) {
         if (obj instanceof Block) return obj;
         if (typeof obj === 'string') return Block.fromString(obj);
-        if (!('no' in obj &amp;&amp; 'prevhash' in obj &amp;&amp; 'version' in obj &amp;&amp; 'time' in obj &amp;&amp; 'transactions' in obj &amp;&amp; 'nonce' in obj)) return null;
-        opt.transactions = obj.transactions.map(Transaction.from);
+        if (opt.transactions) opt.transactions = obj.transactions.map(Transaction.from);
         return new Block(obj);
     }
 
@@ -342,7 +385,7 @@ class Block {
                     reject(err);
                     return;
                 }
-                resolve(Block.fromBuffer(data));
+                resolve(Block.fromBuffer(data.buffer));
             });
         });
     }
@@ -369,13 +412,19 @@ class Blockchain {
          * @type {Block}*/
         this.tail = null;
 
-        if (opt.init) this.loadAndVerify();
+        /**Pending transactions
+         * @type {Transaction[]}*/
+        this.pending = [];
+
+        if (opt.init) this.loadAndVerify().then(no => {
+            if (no === 0) this.addBlock(new Block({ no: 0, time: Date.now() }));
+        });
     }
 
     /**
      * Iterates through the blockchain, starting at the startblock and verifies each block.
      * @param {number} startblock block number, to start iterating from
-     * @returns {number} number of last verified block
+     * @returns {Promise&lt;number>} promise resolving in the number of next block
      */
     async loadAndVerify(startblock = 0) {
         /**@type {Block} */
@@ -383,21 +432,21 @@ class Blockchain {
         let verified = true;
         while (verified) {
             /**@type {Block} */
-            let b;
+            let nextBlock;
             try {
-                b = await Block.fromFileAsync(this.path + '/b' + no);
+                nextBlock = await Block.fromFileAsync(this.path + '/b' + no);
             } catch (e) {
                 break;
             }
-            if (b.verify(this.tail)) {
-                this.tail = b;
+            if (nextBlock.verify(this.tail)) {
+                this.tail = nextBlock;
                 no++;
             } else {
                 verified = false;
                 break;
             }
         }
-        console.log(`Blockchain verified: ${verified}`);
+        console.log(`Blockchain verified: ${verified}. Next block: #${no}`);
         return no;
     }
 
@@ -406,6 +455,24 @@ class Blockchain {
             this.tail = block;
             this.tail.save(this.path + '/b' + this.tail.no);
         }
+    }
+
+    async mine(difficulty = 1, amt = 16) {
+        let transactions;
+        if (this.pending.length &lt;= amt) {
+            transactions = this.pending;
+            this.pending = [];
+        }
+        else {
+            transactions = this.pending.slice(0, amt);
+            this.pending = this.pending.slice(amt);
+        }
+        let block = Block.from({
+            no: this.tail.no,
+            time: Date.now(),
+            transactions: transactions
+        });
+        await block.mine(difficulty);
     }
 }
 
@@ -427,7 +494,7 @@ module.exports.Blockchain = Blockchain;</code></pre>
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.5.5</a> on Wed Aug 15 2018 11:19:56 GMT+0200 (Mitteleuropäische Sommerzeit)
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.5.5</a> on Wed Aug 15 2018 16:12:47 GMT+0200 (Mitteleuropäische Sommerzeit)
 </footer>
 
 <script> prettyPrint(); </script>
