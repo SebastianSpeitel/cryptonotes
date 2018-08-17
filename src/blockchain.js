@@ -448,7 +448,7 @@ class Blockchain {
 
     /**
      * Last block of the chain
-     * @type {Block} last block
+     * @type {Block}
      * @readonly
      */
     get tail() {
