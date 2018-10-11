@@ -2,6 +2,7 @@
 /**@module blockchain */
 const crypto = require('crypto');
 const fs = require('fs');
+const EventEmitter = require('events');
 
 /**Hashes the given value
  * @param {(string | Buffer | TypedArray | DataView)} buf value to hash
@@ -10,6 +11,7 @@ const fs = require('fs');
 function hash(buf) {
     return crypto.createHash('sha256').update(buf).digest();
 }
+module.exports.hash = hash;
 
 /**
  * Generates a Uint8Array with the specified length and amount of leading zeros
@@ -40,10 +42,16 @@ const blockFormat = {
 class Transaction {
     constructor(buffer) {
 
-        /**Buffer representation of the transaction
-         * @type {ArrayBuffer}
+        /**Binary representation of the transaction
+         * @type {Uint8Array}
          */
         this.buffer = buffer;
+    }
+
+    inspect(depth, opts) {
+        return `Transaction\n` +
+            `   Length:${this.byteLength}\n` +
+            `   Buffer:${this.buffer}`;
     }
 
     /**Byte length of the buffer
@@ -61,7 +69,7 @@ class Transaction {
      */
     static from(obj) {
         if (obj instanceof Transaction) return obj;
-
+        if (obj instanceof Uint8Array) return new Transaction(obj);
     }
 }
 
@@ -198,7 +206,20 @@ class Block {
      * @type {Transaction[]}
      */
     get transactions() {
+        if (!this._transactions) {
+            this._transactions = [];
+            let pos = 0;
+            const size = this.body.byteLength;
+            const view = new DataView(this.body.buffer, this.body.byteOffset, size);
+            while (pos < size) {
+                const s = view.getUint32(pos);
+                this._transactions.push(Transaction.from(this.body.slice(pos + 4, pos + 4 + s)));
+                pos += 4 + s;
+            }
+        }
+
         return this._transactions;
+
     }
 
     set transactions(transactions) {
@@ -210,13 +231,12 @@ class Block {
     updateTransactions() {
         const size = this._transactions.reduce((s, t) => s + 4 + t.byteLength, 0);
         this.body = new Uint8Array(size);
-        const view = new DataView(this.body.buffer, 0, size);
+        const view = new DataView(this.body.buffer, this.body.byteOffset, size);
         let pos = 0;
         this._transactions.forEach(t => {
-            const arr = new Uint8Array(t.buffer);
-            const len = arr.byteLength;
+            const len = t.buffer.byteLength;
             view.setUint32(pos, len);
-            this.body.set(arr, pos + 4);
+            this.body.set(t.buffer, pos + 4);
             pos += 4 + len;
         });
         this.txhash = hash(this.body);
@@ -237,7 +257,9 @@ class Block {
      * @returns {boolean} true if this block was verified
      */
     verify(prev = null) {
-        if (!prev || this.no === 0) return true;
+        const txhash = this.txhash;
+        if (hash(this.body).some((b, i) => b !== txhash[i])) return false;
+        if (!prev && this.no === 0) return true;
         const h = prev.hash;
         return this.prevhash.every((b, i) => b === h[i]);
     }
@@ -361,13 +383,15 @@ class Block {
 }
 
 /**Blockchain class */
-class Blockchain {
+class Blockchain extends EventEmitter {
+
 
     /**
      * Constructor
      * @param {object=} opt options object
      */
     constructor(opt = {}) {
+        super();
         /**Local path of the folder containing the block files
          * @type {string}*/
         this.path = opt.path || './blockchain';
@@ -377,9 +401,19 @@ class Blockchain {
         this.pending = [];
 
         /**Number of the last block
-         * @type {number}
-         */
+         * @type {number}*/
         this.no = -1;
+
+        /**Interval-Id for automining
+         * @type {number}*/
+        this.interval = opt.autoMine ? setInterval(() => this.mine(), opt.mineInterval) : undefined;
+
+        /**Mining difficulty (number of bits, that have to be 0)
+         * @type {number}*/
+        this.difficulty = opt.difficulty || 1;
+        /**Maximum amount of transactions in each block 
+         * @type {number}*/
+        this.transactionsPerBlock = opt.transactionsPerBlock || Infinity;
 
         this.nos = new Map();
         this.blocks = new WeakMap();
@@ -387,16 +421,16 @@ class Blockchain {
         /*if (opt.init) this.loadAndVerify().then(no => {
             if (no === 0) this.addBlock(new Block({ no: 0, time: Date.now() }));
         });*/
-        this.loaded = this.load().then(s => {
-            if (!s) this.addBlock(Block.genesis);
-            if (opt.verify) this.verify().then(v => console.log(`Local blocks verified: ${v}`));
+        this.loaded = this.load().then(() => {
+            if (this.no < 0) this.addBlock(Block.genesis);
+            else if (opt.verify) this.verify();
         });
+
 
     }
 
     /**
      * Finds the block with the highest number in the local blockchain folder
-     * @returns {boolean} true if local blocks exist
      */
     async load() {
         /**@type {string[]} */
@@ -408,31 +442,28 @@ class Blockchain {
             files = [];
         }
         if (files.length > 0) {
-            this.no = files.map(f => parseInt(f)).sort((a, b) => a - b)[0];
-            console.log(`Blocks loaded, last block: #${this.no}`);
-            return true;
-        } else {
-            console.log(`No local blocks found`);
-            return false;
+            this.no = files.map(Number).sort((a, b) => b - a)[0];
         }
+        this.emit('load', this.no);
     }
 
     async verify(start = 0) {
-        let no = start;
-        let block;
+        let lastVerified = start - 1;
+        let block, next;
         do {
-            let next;
             try {
-                next = this.getBlock(no);
+                next = this.getBlock(lastVerified + 1);
             } catch (e) { break; }
             if (next && next.verify(block)) {
                 block = next;
-                no++;
+                lastVerified++;
             } else {
                 break;
             }
-        } while (no < this.no);
-        return no >= this.no;
+        } while (lastVerified <= this.no);
+        const verified = lastVerified === this.no;
+        this.emit('verify', verified, lastVerified, this.no);
+        return verified;
     }
 
     /**
@@ -467,7 +498,13 @@ class Blockchain {
         const block = Block.fromFile(this.path + '/' + no);
         this.nos.set(no, n);
         this.blocks.set(n, block);
+        this.emit('block', block);
         return block;
+    }
+
+    addTransaction(transaction) {
+        if (!(transaction instanceof Transaction)) throw TypeError('Given object is not of type Transaction');
+        this.pending.push(transaction);
     }
 
     addBlock(block) {
@@ -475,21 +512,22 @@ class Blockchain {
             block.save(this.path + '/' + block.no);
             this._tail = block;
             this.no = block.no;
-            console.log(`Added block #${this.no}`);
+            console.log(`Added block #${this.no} `);
+            this.emit('block', block);
             return true;
         }
         return false;
     }
 
-    mine(difficulty = 1, amt = Infinity) {
+    mine() {
         let transactions;
-        if (this.pending.length <= amt) {
+        if (this.pending.length <= this.transactionsPerBlock) {
             transactions = this.pending;
             this.pending = [];
         }
         else {
-            transactions = this.pending.slice(0, amt);
-            this.pending = this.pending.slice(amt);
+            transactions = this.pending.slice(0, this.transactionsPerBlock);
+            this.pending = this.pending.slice(this.transactionsPerBlock);
         }
         let block = Block.from({
             no: this.no + 1,
@@ -497,7 +535,7 @@ class Blockchain {
             time: Date.now(),
             transactions: transactions
         });
-        return block.mine(difficulty).then(() => this.addBlock(block));
+        return block.mine(this.difficulty).then(() => this.addBlock(block));
     }
 }
 

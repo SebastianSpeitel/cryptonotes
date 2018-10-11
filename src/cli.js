@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+﻿//#!/usr/bin/env node
 const chalk = require('chalk');
 const { Block } = require('./blockchain.js');
 
