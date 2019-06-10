@@ -101,8 +101,17 @@ class CryptoNotes extends EventEmitter {
         this.blockchain.mine();
     }
 
+    /**
+     * updates the state of a note
+     * @param {NoteChange} noteChange change
+     */
     update(noteChange) {
         console.log(noteChange);
+        switch (noteChange.type) {
+            case 1:
+                this.notes.set(noteChange.id, noteChange.metaHash);
+                break;
+        }
     }
 
 }
@@ -143,5 +152,6 @@ class CryptoNote {
 
         return new NoteChange({ id: this.id, type: NoteChange.NEW, metaHash: meta[0].hash, hash: hash });
     }
+
 }
 module.exports.CryptoNote = CryptoNote;
