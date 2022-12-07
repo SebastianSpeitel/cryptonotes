@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "chalk": "^2.4.2",
-    "ipfs": "^0.36.3"
+    "ipfs": "^0.65.0"
   },
   "private": true,
   "repository": {
